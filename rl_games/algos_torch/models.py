@@ -259,7 +259,10 @@ class ModelA2CContinuousLogStd(BaseModel):
             is_train = input_dict.get('is_train', True)
             prev_actions = input_dict.get('prev_actions', None)
             input_dict['obs'] = self.norm_obs(input_dict['obs'])
-            mu, logstd, value, states = self.a2c_network(input_dict)
+            if self.a2c_network.is_aux():
+                mu, logstd, value, states, aux_pred = self.a2c_network(input_dict)
+            else:
+                mu, logstd, value, states = self.a2c_network(input_dict)
             sigma = torch.exp(logstd)
             distr = torch.distributions.Normal(mu, sigma, validate_args=False)
             if is_train:
@@ -271,10 +274,16 @@ class ModelA2CContinuousLogStd(BaseModel):
                     'entropy' : entropy,
                     'rnn_states' : states,
                     'mus' : mu,
-                    'sigmas' : sigma
+                    'sigmas' : sigma,
+                    'aux_preds': aux_pred
                 }                
                 return result
             else:
+                #TODO PPO-UE
+                # print(input_dict)
+                #if prev_actions is not None:
+                #    action_distance_ratio = torch.linalg.norm(mu - prev_actions, dim=-1) / torch.linalg.norm(prev_actions, dim=-1)
+                #    print("action_distance_ratio", action_distance_ratio)
                 selected_action = distr.sample()
                 choice = torch.rand_like(selected_action) > 0.02
                 choice = choice.float()
@@ -286,7 +295,8 @@ class ModelA2CContinuousLogStd(BaseModel):
                     'actions' : selected_action,
                     'rnn_states' : states,
                     'mus' : mu,
-                    'sigmas' : sigma
+                    'sigmas' : sigma,
+                    'aux_preds': aux_pred
                 }
                 return result
 

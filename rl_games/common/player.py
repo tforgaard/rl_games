@@ -85,10 +85,10 @@ class BasePlayer(object):
                 obs_batch = obs_batch.float() / 255.0
         return obs_batch
 
-    def env_step(self, env, actions):
+    def env_step(self, env, actions, aux_output=None):
         if not self.is_tensor_obses:
             actions = actions.cpu().numpy()
-        obs, rewards, dones, infos = env.step(actions)
+        obs, rewards, dones, infos = env.step((actions, aux_output))
         if hasattr(obs, 'dtype') and obs.dtype == np.float64:
             obs = np.float32(obs)
         if self.value_size > 1:
@@ -163,7 +163,7 @@ class BasePlayer(object):
     def create_env(self):
         return env_configurations.configurations[self.env_name]['env_creator'](**self.env_config)
 
-    def get_action(self, obs, is_deterministic=False):
+    def get_action(self, obs, is_deterministic=False, aux_output=False):
         raise NotImplementedError('step')
 
     def get_masked_action(self, obs, mask, is_deterministic=False):
@@ -225,9 +225,9 @@ class BasePlayer(object):
                     action = self.get_masked_action(
                         obses, masks, is_deterministic)
                 else:
-                    action = self.get_action(obses, is_deterministic)
+                    action, aux_out = self.get_action(obses, is_deterministic, aux_output=True)
 
-                obses, r, done, info = self.env_step(self.env, action)
+                obses, r, done, info = self.env_step(self.env, action, aux_out)
                 cr += r
                 steps += 1
 

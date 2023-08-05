@@ -1066,6 +1066,8 @@ class ContinuousA2CBase(A2CBase):
         action_space = self.env_info['action_space']
         self.actions_num = action_space.shape[0]
         self.bounds_loss_coef = self.config.get('bounds_loss_coef', None)
+        self.aux_loss_coef = self.config.get('aux_loss_coef', 0.0)
+        self.aux_states = self.config.get('aux_states', None)
 
         self.clip_actions = self.config.get('clip_actions', True)
 
@@ -1115,19 +1117,22 @@ class ContinuousA2CBase(A2CBase):
         a_losses = []
         c_losses = []
         b_losses = []
+        aux_losses = []
         entropies = []
         kls = []
 
         for mini_ep in range(0, self.mini_epochs_num):
             ep_kls = []
             for i in range(len(self.dataset)):
-                a_loss, c_loss, entropy, kl, last_lr, lr_mul, cmu, csigma, b_loss = self.train_actor_critic(self.dataset[i])
+                a_loss, c_loss, entropy, kl, last_lr, lr_mul, cmu, csigma, b_loss, aux_loss = self.train_actor_critic(self.dataset[i])
                 a_losses.append(a_loss)
                 c_losses.append(c_loss)
                 ep_kls.append(kl)
                 entropies.append(entropy)
                 if self.bounds_loss_coef is not None:
                     b_losses.append(b_loss)
+                if self.aux_loss_coef is not None:
+                    aux_losses.append(aux_loss)
 
                 self.dataset.update_mu_sigma(cmu, csigma)
                 if self.schedule_type == 'legacy':
@@ -1156,7 +1161,7 @@ class ContinuousA2CBase(A2CBase):
         update_time = update_time_end - update_time_start
         total_time = update_time_end - play_time_start
 
-        return batch_dict['step_time'], play_time, update_time, total_time, a_losses, c_losses, b_losses, entropies, kls, last_lr, lr_mul
+        return batch_dict['step_time'], play_time, update_time, total_time, a_losses, c_losses, b_losses, aux_losses, entropies, kls, last_lr, lr_mul
 
     def prepare_dataset(self, batch_dict):
         obses = batch_dict['obses']
@@ -1199,6 +1204,7 @@ class ContinuousA2CBase(A2CBase):
         dataset_dict['returns'] = returns
         dataset_dict['actions'] = actions
         dataset_dict['obs'] = obses
+        dataset_dict['states'] = batch_dict['states']
         dataset_dict['dones'] = dones
         dataset_dict['rnn_states'] = rnn_states
         dataset_dict['rnn_masks'] = rnn_masks
@@ -1235,7 +1241,7 @@ class ContinuousA2CBase(A2CBase):
 
         while True:
             epoch_num = self.update_epoch()
-            step_time, play_time, update_time, sum_time, a_losses, c_losses, b_losses, entropies, kls, last_lr, lr_mul = self.train_epoch()
+            step_time, play_time, update_time, sum_time, a_losses, c_losses, b_losses, aux_losses, entropies, kls, last_lr, lr_mul = self.train_epoch()
             total_time += sum_time
             frame = self.frame // self.num_agents
 
@@ -1260,6 +1266,9 @@ class ContinuousA2CBase(A2CBase):
 
                 if len(b_losses) > 0:
                     self.writer.add_scalar('losses/bounds_loss', torch_ext.mean_list(b_losses).item(), frame)
+
+                if len(aux_losses) > 0:
+                    self.writer.add_scalar('losses/aux_loss', torch_ext.mean_list(aux_losses).item(), frame)
 
                 if self.has_soft_aug:
                     self.writer.add_scalar('losses/aug_loss', np.mean(aug_losses), frame)

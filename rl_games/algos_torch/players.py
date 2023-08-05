@@ -41,13 +41,13 @@ class PpoPlayerContinuous(BasePlayer):
         self.model.eval()
         self.is_rnn = self.model.is_rnn()
 
-    def get_action(self, obs, is_deterministic = False):
+    def get_action(self, obs, is_deterministic = False, aux_output = False):
         if self.has_batch_dimension == False:
             obs = unsqueeze_obs(obs)
         obs = self._preproc_obs(obs)
         input_dict = {
             'is_train': False,
-            'prev_actions': None, 
+            'prev_actions': None, #obs.get('prev_actions',None), 
             'obs' : obs,
             'rnn_states' : self.states
         }
@@ -64,7 +64,10 @@ class PpoPlayerContinuous(BasePlayer):
             current_action = torch.squeeze(current_action.detach())
 
         if self.clip_actions:
-            return rescale_actions(self.actions_low, self.actions_high, torch.clamp(current_action, -1.0, 1.0))
+            current_action = rescale_actions(self.actions_low, self.actions_high, torch.clamp(current_action, -1.0, 1.0))
+
+        if aux_output:
+            return current_action, res_dict['aux_preds']
         else:
             return current_action
 

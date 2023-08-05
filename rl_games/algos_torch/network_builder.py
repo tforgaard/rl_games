@@ -65,6 +65,9 @@ class NetworkBuilder:
 
         def is_rnn(self):
             return False
+        
+        def is_aux(self):
+            return False
 
         def get_default_rnn_state(self):
             return None

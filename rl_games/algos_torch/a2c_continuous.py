@@ -58,6 +58,10 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
             self.value_mean_std = self.central_value_net.model.value_mean_std if self.has_central_value else self.model.value_mean_std
 
         self.has_value_loss = self.use_experimental_cv or not self.has_central_value
+        self.has_aux_loss = self.aux_loss_coef is not None and self.aux_loss_coef > 0.0
+        if self.has_aux_loss:
+            assert self.aux_states is not None
+
         self.algo_observer.after_init(self)
 
     def update_epoch(self):
@@ -69,7 +73,7 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
         torch_ext.save_checkpoint(fn, state)
 
     def restore(self, fn):
-        checkpoint = torch_ext.load_checkpoint(fn)
+        checkpoint = torch_ext.load_checkpoint(fn,self.ppo_device)
         self.set_full_state_weights(checkpoint)
 
     def get_masked_action_values(self, obs, action_masks):
@@ -85,6 +89,9 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
         actions_batch = input_dict['actions']
         obs_batch = input_dict['obs']
         obs_batch = self._preproc_obs(obs_batch)
+        if self.has_aux_loss:
+            states_batch = input_dict['states']
+            states_batch = self._preproc_obs(states_batch)
 
         lr_mul = 1.0
         curr_e_clip = self.e_clip
@@ -111,6 +118,8 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
             entropy = res_dict['entropy']
             mu = res_dict['mus']
             sigma = res_dict['sigmas']
+            if self.has_aux_loss:
+                aux_pred = res_dict['aux_preds']
 
             a_loss = self.actor_loss_func(old_action_log_probs_batch, action_log_probs, advantage, self.ppo, curr_e_clip)
 
@@ -124,10 +133,16 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
                 b_loss = self.bound_loss(mu)
             else:
                 b_loss = torch.zeros(1, device=self.ppo_device)
-            losses, sum_mask = torch_ext.apply_masks([a_loss.unsqueeze(1), c_loss , entropy.unsqueeze(1), b_loss.unsqueeze(1)], rnn_masks)
-            a_loss, c_loss, entropy, b_loss = losses[0], losses[1], losses[2], losses[3]
+            if self.has_aux_loss:
+                aux_state = states_batch[:,self.aux_states]
+                aux_loss = ((aux_state - aux_pred)*(aux_state - aux_pred)).sum(axis=-1)
+            else:
+                aux_loss = torch.zeros(1, device=self.ppo_device)
 
-            loss = a_loss + 0.5 * c_loss * self.critic_coef - entropy * self.entropy_coef + b_loss * self.bounds_loss_coef
+            losses, sum_mask = torch_ext.apply_masks([a_loss.unsqueeze(1), c_loss , entropy.unsqueeze(1), b_loss.unsqueeze(1), aux_loss.unsqueeze(1)], rnn_masks)
+            a_loss, c_loss, entropy, b_loss, aux_loss  = losses[0], losses[1], losses[2], losses[3], losses[4]
+
+            loss = a_loss + 0.5 * c_loss * self.critic_coef - entropy * self.entropy_coef + b_loss * self.bounds_loss_coef + aux_loss * self.aux_loss_coef
             
             if self.multi_gpu:
                 self.optimizer.zero_grad()
@@ -156,7 +171,7 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
 
         self.train_result = (a_loss, c_loss, entropy, \
             kl_dist, self.last_lr, lr_mul, \
-            mu.detach(), sigma.detach(), b_loss)
+            mu.detach(), sigma.detach(), b_loss, aux_loss)
 
     def train_actor_critic(self, input_dict):
         self.calc_gradients(input_dict)
